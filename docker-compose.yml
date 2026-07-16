@@ -5,7 +5,21 @@ services:
     ports:
       - "8000:8000"
     volumes:
+      - .:/app
       - db_data:/data
+
+  frontend:
+    build: ./frontend
+    container_name: kronos_frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    depends_on:
+      - app
 
 volumes:
   db_data:
