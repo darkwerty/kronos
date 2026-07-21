@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import './App.css';
+import NeonConfetti from './NeonConfetti';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -21,6 +22,21 @@ function App() {
   // UX State
   const [showManager, setShowManager] = useState(false);
   const [activeTab, setActiveTab] = useState('TRACKER'); // 'TRACKER' or 'HISTORY'
+
+  // Micro-interactions & Smart Input State
+  const [expandedLogId, setExpandedLogId] = useState(null);
+  const [animatingHabitId, setAnimatingHabitId] = useState(null);
+  const [confettiTrigger, setConfettiTrigger] = useState(null);
+  const [weekCompletionMap, setWeekCompletionMap] = useState({});
+  const [miniHabitsMap, setMiniHabitsMap] = useState({});
+  const prevCompletionPctRef = useRef(0);
+
+  const toggleMiniMode = (habitId) => {
+    setMiniHabitsMap((prev) => ({
+      ...prev,
+      [habitId]: !prev[habitId],
+    }));
+  };
 
   // History State
   const [historyChecklists, setHistoryChecklists] = useState([]);
@@ -243,6 +259,7 @@ function App() {
       showNotification('Progress logged successfully!');
       fetchChecklist();
       fetchHabits(); // XP and Levels might have updated
+      fetchWeekCompletionData(weekDays);
     } catch (err) {
       showNotification(err.message, true);
     }
@@ -262,22 +279,99 @@ function App() {
       showNotification('Log reset successfully!');
       fetchChecklist();
       fetchHabits();
+      fetchWeekCompletionData(weekDays);
     } catch (err) {
       showNotification(err.message, true);
     }
   };
 
-  // Date Navigation Helpers
-  const handlePrevDay = () => {
-    const d = new Date(selectedDate);
-    d.setDate(d.getDate() - 1);
-    setSelectedDate(d.toISOString().split('T')[0]);
+  // 7-Day Week Calculation & Completion Tracking (Fase 2)
+  const getWeekDays = (referenceDateStr) => {
+    const parts = referenceDateStr.split('-');
+    const y = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    const d = parseInt(parts[2], 10);
+    const ref = new Date(y, m, d);
+
+    const dayOfWeek = ref.getDay();
+    const isoDay = dayOfWeek === 0 ? 7 : dayOfWeek; // Mon = 1 ... Sun = 7
+    const diffToMon = 1 - isoDay;
+
+    const monday = new Date(y, m, d + diffToMon);
+
+    const days = [];
+    const spanishLetters = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
+
+    const today = new Date();
+    const offset = today.getTimezoneOffset();
+    const localToday = new Date(today.getTime() - offset * 60 * 1000).toISOString().split('T')[0];
+
+    for (let i = 0; i < 7; i++) {
+      const cur = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
+      const yyyy = cur.getFullYear();
+      const mm = String(cur.getMonth() + 1).padStart(2, '0');
+      const dd = String(cur.getDate()).padStart(2, '0');
+      const isoStr = `${yyyy}-${mm}-${dd}`;
+
+      days.push({
+        date: isoStr,
+        dayNum: cur.getDate(),
+        dayLetter: spanishLetters[i],
+        isToday: isoStr === localToday,
+        isSelected: isoStr === referenceDateStr,
+      });
+    }
+    return days;
   };
 
-  const handleNextDay = () => {
-    const d = new Date(selectedDate);
-    d.setDate(d.getDate() + 1);
-    setSelectedDate(d.toISOString().split('T')[0]);
+  const weekDays = getWeekDays(selectedDate);
+
+  const fetchWeekCompletionData = async (days) => {
+    try {
+      const requests = days.map((d) =>
+        fetch(`${API_BASE_URL}/habits/checklist?target_date=${d.date}`).then((res) => (res.ok ? res.json() : []))
+      );
+      const results = await Promise.all(requests);
+      const map = {};
+      days.forEach((d, idx) => {
+        const dayChecklist = results[idx] || [];
+        const total = dayChecklist.length;
+        const completed = dayChecklist.filter((item) => item.progress_state === 'COMPLETED').length;
+        const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+        map[d.date] = {
+          total,
+          completed,
+          percentage: pct,
+          isCompleted: total > 0 && completed === total,
+        };
+      });
+      setWeekCompletionMap(map);
+    } catch (err) {
+      console.error('Failed to fetch week completion data:', err);
+    }
+  };
+
+  // Update week completion data when selectedDate or habits change
+  useEffect(() => {
+    fetchWeekCompletionData(weekDays);
+  }, [selectedDate, habits]);
+
+  const handlePrevWeek = () => {
+    const parts = selectedDate.split('-');
+    const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10) - 7);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    setSelectedDate(`${yyyy}-${mm}-${dd}`);
+  };
+
+  const handleNextWeek = () => {
+    const parts = selectedDate.split('-');
+    const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10) + 7);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    setSelectedDate(`${yyyy}-${mm}-${dd}`);
   };
 
   const handleSetToday = () => {
@@ -285,6 +379,19 @@ function App() {
     const offset = today.getTimezoneOffset();
     const localToday = new Date(today.getTime() - offset * 60 * 1000);
     setSelectedDate(localToday.toISOString().split('T')[0]);
+  };
+
+  const handleQuickIncrement = (item, delta) => {
+    setAnimatingHabitId(item.id);
+    setTimeout(() => setAnimatingHabitId(null), 400);
+
+    const current = item.amount_done || 0;
+    const newAmount = Math.max(0, current + delta);
+    handleLogProgress(item.id, newAmount);
+  };
+
+  const toggleSmartInput = (habitId) => {
+    setExpandedLogId((prev) => (prev === habitId ? null : habitId));
   };
 
   const formatDayName = (dateStr) => {
@@ -312,6 +419,14 @@ function App() {
   const totalHabitsCount = checklist.length;
   const completedHabitsCount = checklist.filter((item) => item.progress_state === 'COMPLETED').length;
   const completionPercentage = totalHabitsCount > 0 ? Math.round((completedHabitsCount / totalHabitsCount) * 100) : 0;
+
+  // Trigger neon confetti explosion when completing Daily Quest (100%)
+  useEffect(() => {
+    if (totalHabitsCount > 0 && completionPercentage === 100 && prevCompletionPctRef.current < 100) {
+      setConfettiTrigger(Date.now());
+    }
+    prevCompletionPctRef.current = completionPercentage;
+  }, [completionPercentage, totalHabitsCount]);
 
   // Analytics calculations
   const past7Days = getPast7Days();
@@ -356,6 +471,8 @@ function App() {
 
   return (
     <div className="dashboard">
+      <NeonConfetti trigger={confettiTrigger} />
+
       <header className="dashboard-header">
         <div className="brand">
           <h1>KRONOS</h1>
@@ -404,20 +521,31 @@ function App() {
               <button className="btn btn-secondary btn-sm" onClick={handleSetToday}>Today</button>
             </div>
 
+            {/* Mini-Calendario Semanal Horizontal (Fase 2) */}
             <div className="date-navigator">
-              <button className="btn btn-secondary btn-icon-only" onClick={handlePrevDay}>◀</button>
-              <div className="date-info">
-                <span className="day-name">{formatDayName(selectedDate)}</span>
-                <span className="date-value">{formatDisplayDate(selectedDate)}</span>
-                <input 
-                  type="date" 
-                  value={selectedDate} 
-                  onChange={(e) => setSelectedDate(e.target.value)} 
-                  className="form-control"
-                  style={{ marginTop: '0.25rem', padding: '0.2rem 0.5rem', fontSize: '0.8rem', width: 'auto' }}
-                />
+              <button className="btn btn-secondary btn-icon-only" onClick={handlePrevWeek} title="Semana anterior">◀</button>
+              
+              <div className="week-bubbles-row">
+                {weekDays.map((d) => {
+                  const dayData = weekCompletionMap[d.date];
+                  const isCompleted = dayData ? dayData.isCompleted : false;
+
+                  return (
+                    <button
+                      key={d.date}
+                      className={`week-bubble-btn ${d.isSelected ? 'active' : ''} ${isCompleted ? 'completed' : ''}`}
+                      onClick={() => setSelectedDate(d.date)}
+                      title={`${formatDisplayDate(d.date)}${isCompleted ? ' - ¡Día completado al 100%! 🌟' : ''}`}
+                    >
+                      <span className="week-bubble-day">{d.dayLetter}</span>
+                      <span className="week-bubble-num">{d.dayNum}</span>
+                      <span className="week-bubble-indicator"></span>
+                    </button>
+                  );
+                })}
               </div>
-              <button className="btn btn-secondary btn-icon-only" onClick={handleNextDay}>▶</button>
+
+              <button className="btn btn-secondary btn-icon-only" onClick={handleNextWeek} title="Semana siguiente">▶</button>
             </div>
 
             {/* Gamified Rewards Overview */}
@@ -443,6 +571,7 @@ function App() {
               </div>
             )}
 
+            {/* Habit Progress Cards List (Fase 1) */}
             <div className="card-list">
               {checklist.length === 0 ? (
                 <div className="empty-state">
@@ -452,106 +581,162 @@ function App() {
                 </div>
               ) : (
                 checklist.map((item) => {
+                  const isMini = !!miniHabitsMap[item.id];
                   const currentProgress = item.amount_done || 0;
-                  const target = item.target_snapshot || item.amount;
+                  const rawTarget = item.target_snapshot || item.amount;
+                  const miniTarget = rawTarget <= 5 ? 1 : Math.round(rawTarget * 0.2);
+                  const effectiveTarget = isMini ? miniTarget : rawTarget;
                   const unit = item.unit_snapshot || item.unit;
-                  const percentage = Math.min(item.percentage, 100);
-                  const isCompleted = item.progress_state === 'COMPLETED';
-
-                  // Determine progress color
-                  let progressClass = 'teal';
-                  if (isCompleted) progressClass = 'success';
-                  else if (item.progress_state === 'IN_PROGRESS') progressClass = 'violet';
+                  
+                  const percentage = Math.min(100, Math.round((currentProgress / effectiveTarget) * 100));
+                  const isCompleted = currentProgress >= effectiveTarget || item.progress_state === 'COMPLETED';
+                  const isSpring = animatingHabitId === item.id;
+                  const isExpanded = expandedLogId === item.id;
 
                   return (
-                    <div className={`habit-row-card ${isCompleted ? 'completed' : ''}`} key={item.id}>
-                      {/* Checkbox button for quick toggle complete */}
-                      <button 
-                        className={`habit-check-btn ${isCompleted ? 'checked' : ''}`}
-                        onClick={() => handleLogProgress(item.id, isCompleted ? 0 : target)}
-                        title={isCompleted ? "Reset progress" : "Mark as completed"}
-                      >
-                        {isCompleted ? '✓' : ''}
-                      </button>
+                    <div 
+                      className={`habit-row-card ${isCompleted ? 'completed' : ''} ${isMini ? 'mini-mode' : ''} ${isSpring ? 'spring-bump' : ''}`}
+                      key={item.id}
+                      onDoubleClick={() => handleLogProgress(item.id, isCompleted ? 0 : effectiveTarget)}
+                      title="Doble clic para completar/reiniciar al 100%"
+                    >
+                      {/* Fluid Gradient Progress Fill extending behind content */}
+                      <div 
+                        className="card-progress-bar-fill"
+                        style={{ width: `${percentage}%` }}
+                      ></div>
 
-                      {/* Habit Name & Target Goal */}
-                      <div className="habit-row-info">
-                        <span className="habit-row-name">
-                          {item.name}
-                          {isCompleted && <span className="completed-star"> ✨</span>}
-                        </span>
-                        <span className="habit-row-target">Goal: {target} {unit}</span>
-                      </div>
+                      {/* Top Row: Mini Toggle, Habit Info, Level/XP */}
+                      <div className="habit-row-top">
+                        <div className="habit-title-group">
+                          {/* Mini Version 1-Tap Toggle Icon Button (⚡) */}
+                          <button
+                            type="button"
+                            className={`btn-mini-toggle ${isMini ? 'active' : ''}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleMiniMode(item.id);
+                            }}
+                            title={isMini ? "Desactivar Versión Mini (Restaurar Meta Normal)" : "Activar Versión Mini (Modo Rápido ⚡)"}
+                          >
+                            ⚡
+                          </button>
 
-                      {/* Level / XP metrics */}
-                      <div className="habit-row-level">
-                        <span className="level-pill">Lv.{item.level}</span>
-                        <span className="xp-pill">{item.current_xp} XP</span>
-                      </div>
-
-                      {/* Progress Bar & percentage */}
-                      <div className="habit-row-progress">
-                        <div className="progress-bar-bg" style={{ marginBottom: 0 }}>
-                          <div 
-                            className={`progress-bar-fill ${progressClass}`} 
-                            style={{ width: `${percentage}%` }}
-                          ></div>
+                          {/* Habit Name & Goal Target */}
+                          <div className="habit-name-wrapper">
+                            <span className="habit-row-name">
+                              {item.name}
+                              {isMini && <span className="mini-badge">MINI</span>}
+                              {isCompleted && <span className="completed-star"> ✨</span>}
+                            </span>
+                            <span className="habit-row-target">
+                              Meta: {effectiveTarget} {unit} {isMini && <span className="mini-target-note">(Original: {rawTarget})</span>}
+                            </span>
+                          </div>
                         </div>
-                        <span className="progress-ratio-text">{currentProgress} / {target}</span>
+
+                        {/* Level / XP metrics */}
+                        <div className="habit-row-level">
+                          <span className="level-pill">Lv.{item.level}</span>
+                          <span className="xp-pill">{item.current_xp} XP</span>
+                        </div>
                       </div>
 
-                      {/* Compact actions widget */}
-                      <div className="habit-row-actions">
+                      {/* Bottom Controls Row: Checkbox, Counter, Quick Volume Buttons */}
+                      <div className="habit-row-bottom">
+                        {/* Checkbox button + "Completar" Label */}
                         <button 
-                          className="btn btn-secondary btn-sm"
-                          style={{ padding: '0.3rem 0.5rem', height: '28px', fontSize: '0.8rem' }}
-                          onClick={() => handleLogProgress(item.id, currentProgress + 1)}
-                          title="Increment by 1"
+                          className={`habit-check-btn-wrapper ${isCompleted ? 'checked' : ''}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleLogProgress(item.id, isCompleted ? 0 : effectiveTarget);
+                          }}
+                          title={isCompleted ? "Reiniciar progreso" : "Marcar como completado (100%)"}
                         >
-                          +1
+                          <div className={`habit-check-btn ${isCompleted ? 'checked' : ''}`}>
+                            {isCompleted ? '✓' : ''}
+                          </div>
+                          <span className="check-btn-text">{isCompleted ? 'Completado' : 'Completar'}</span>
                         </button>
 
-                        <div className="custom-log-container">
-                          <input 
-                            type="number" 
-                            step="any"
-                            min="0"
-                            placeholder="Log"
-                            className="input-log-amount-sm"
-                            value={customLogAmounts[item.id] !== undefined ? customLogAmounts[item.id] : ''}
-                            onChange={(e) => setCustomLogAmounts({
-                              ...customLogAmounts,
-                              [item.id]: e.target.value
-                            })}
-                          />
+                        {/* Progress Count Badge (Toggle Smart Input) */}
+                        <div 
+                          className="progress-counter-badge"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleSmartInput(item.id);
+                          }}
+                          title="Haz clic para editar la cifra exacta"
+                        >
+                          <span className="counter-numbers">{currentProgress} / {effectiveTarget}</span>
+                          <span className="edit-icon-sm">✏️</span>
+                        </div>
+
+                        {/* Quick Action Volume Buttons */}
+                        <div className="quick-volume-actions" onClick={(e) => e.stopPropagation()}>
                           <button 
-                            className="btn btn-primary btn-sm"
-                            style={{ padding: '0 0.4rem', height: '22px', borderRadius: '4px' }}
-                            onClick={() => {
-                              const amount = parseFloat(customLogAmounts[item.id]);
-                              if (!isNaN(amount) && amount >= 0) {
-                                handleLogProgress(item.id, amount);
-                                setCustomLogAmounts({ ...customLogAmounts, [item.id]: '' });
+                            className="btn-quick-vol"
+                            onClick={() => handleQuickIncrement(item, 1)}
+                            title="Añadir +1"
+                          >
+                            +1
+                          </button>
+                          {rawTarget >= 5 && (
+                            <button 
+                              className="btn-quick-vol btn-quick-vol-lg"
+                              onClick={() => handleQuickIncrement(item, rawTarget >= 50 ? 10 : 5)}
+                              title={`Añadir +${rawTarget >= 50 ? 10 : 5}`}
+                            >
+                              +{rawTarget >= 50 ? 10 : 5}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Smart Log Input Drawer (Expandable) */}
+                      {isExpanded && (
+                        <div className="smart-log-drawer" onClick={(e) => e.stopPropagation()}>
+                          <form 
+                            className="smart-log-form"
+                            onSubmit={(e) => {
+                              e.preventDefault();
+                              const val = parseFloat(customLogAmounts[item.id]);
+                              if (!isNaN(val) && val >= 0) {
+                                handleLogProgress(item.id, val);
+                                setExpandedLogId(null);
                               } else {
-                                showNotification('Invalid progress amount', true);
+                                showNotification('Por favor introduce un número válido', true);
                               }
                             }}
                           >
-                            →
-                          </button>
-                        </div>
+                            <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Introducir cantidad exacta:</span>
+                            <input 
+                              type="number"
+                              step="any"
+                              min="0"
+                              autoFocus
+                              placeholder={currentProgress.toString()}
+                              className="smart-log-input"
+                              value={customLogAmounts[item.id] !== undefined ? customLogAmounts[item.id] : ''}
+                              onChange={(e) => setCustomLogAmounts({ ...customLogAmounts, [item.id]: e.target.value })}
+                            />
+                            <button type="submit" className="btn btn-primary btn-sm">Guardar</button>
+                          </form>
 
-                        {item.amount_done !== null && (
-                          <button 
-                            className="btn btn-danger btn-sm"
-                            style={{ padding: '0.2rem 0.4rem', height: '28px', fontSize: '0.75rem' }}
-                            onClick={() => handleDeleteLog(item.id)}
-                            title="Reset progress"
-                          >
-                            ✕
-                          </button>
-                        )}
-                      </div>
+                          {item.amount_done !== null && (
+                            <button 
+                              className="btn btn-danger btn-sm"
+                              onClick={() => {
+                                handleDeleteLog(item.id);
+                                setExpandedLogId(null);
+                              }}
+                              title="Reiniciar a 0"
+                            >
+                              Reset ✕
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })
