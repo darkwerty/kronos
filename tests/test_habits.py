@@ -61,3 +61,25 @@ def test_list_habits_filters_by_status(client):
     ids = [h["id"] for h in resp.json()]
     assert a["id"] in ids
     assert b["id"] not in ids
+
+
+def test_scheduled_target_days_filtering(client):
+    # Create habit scheduled ONLY on Mondays (ISO day 1)
+    mon_habit = client.post(
+        "/habits", json={"name": "Monday Only Habit", "target_days": "1"}
+    ).json()
+
+    # 2026-07-20 is a Monday (ISO day 1)
+    checklist_mon = client.get(
+        "/habits/checklist", params={"target_date": "2026-07-20"}
+    ).json()
+    ids_mon = [h["id"] for h in checklist_mon]
+    assert mon_habit["id"] in ids_mon
+
+    # 2026-07-21 is a Tuesday (ISO day 2)
+    checklist_tue = client.get(
+        "/habits/checklist", params={"target_date": "2026-07-21"}
+    ).json()
+    ids_tue = [h["id"] for h in checklist_tue]
+    assert mon_habit["id"] not in ids_tue
+

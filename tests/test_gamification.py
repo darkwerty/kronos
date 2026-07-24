@@ -1,6 +1,7 @@
 import pytest
 
-from app.gamification import calculate_level, xp_for_log
+from app.crud import create_habit, upsert_log
+from app.gamification import calculate_level, calculate_streak, get_rank_title, xp_for_log
 
 
 @pytest.mark.parametrize(
@@ -36,3 +37,26 @@ def test_xp_for_log_binary_habit_with_zero_target():
 )
 def test_calculate_level_thresholds(total_xp, expected_level):
     assert calculate_level(total_xp) == expected_level
+
+
+def test_get_rank_title():
+    assert get_rank_title(1) == "Novato 🥉"
+    assert get_rank_title(3) == "Aprendiz 🥈"
+    assert get_rank_title(7) == "Especialista 🥇"
+    assert get_rank_title(12) == "Maestro 💎"
+    assert get_rank_title(25) == "Titán 👑"
+
+
+def test_calculate_streak(client):
+    h = client.post("/habits", json={"name": "Run", "amount": 5.0, "unit": "km"}).json()
+    # Log 3 consecutive days
+    client.post(f"/habits/{h['id']}/logs", json={"logged_date": "2026-07-19", "amount_done": 5.0})
+    client.post(f"/habits/{h['id']}/logs", json={"logged_date": "2026-07-20", "amount_done": 5.0})
+    client.post(f"/habits/{h['id']}/logs", json={"logged_date": "2026-07-21", "amount_done": 5.0})
+
+    checklist = client.get("/habits/checklist", params={"target_date": "2026-07-21"}).json()
+    item = next(i for i in checklist if i["id"] == h["id"])
+    assert item["streak"] == 3
+    assert item["rank_title"] == "Novato 🥉"
+
+

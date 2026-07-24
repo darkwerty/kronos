@@ -2,6 +2,11 @@ services:
   app:
     build: .
     container_name: kronos_app
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    env_file:
+      - .env
     ports:
       - "8000:8000"
     volumes:
@@ -11,13 +16,20 @@ services:
   frontend:
     build: ./frontend
     container_name: kronos_frontend
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    env_file:
+      - .env
     ports:
       - "3000:3000"
     volumes:
       - ./frontend:/app
       - /app/node_modules
     environment:
-      - VITE_API_URL=http://localhost:8000
+      - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
+      - VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID}
+      - VITE_GITHUB_CLIENT_ID=${VITE_GITHUB_CLIENT_ID}
     depends_on:
       - app
 
